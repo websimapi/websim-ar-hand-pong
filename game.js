@@ -15,10 +15,19 @@ class PongGame {
     this.ballSpeedY = 5;
     
     this.setupCanvas();
-    this.setupHandTracking();
-    this.setupCamera();
-    
-    this.resetBall();
+    this.init();
+  }
+
+  async init() {
+    try {
+      await this.setupCamera();
+      await this.setupHandTracking();
+      this.resetBall();
+      this.statusElement.textContent = "Waiting for hands...";
+    } catch (error) {
+      console.error('Initialization error:', error);
+      this.statusElement.textContent = "Error: Could not access camera. Please ensure camera permissions are granted and reload the page.";
+    }
   }
   
   setupCanvas() {
@@ -32,31 +41,59 @@ class PongGame {
   }
   
   setupHandTracking() {
-    this.hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    return new Promise((resolve, reject) => {
+      try {
+        this.hands = new Hands({
+          locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+          }
+        });
+        
+        this.hands.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        
+        this.hands.onResults(results => this.onHandsResults(results));
+        resolve();
+      } catch (error) {
+        reject(error);
       }
     });
-    
-    this.hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    
-    this.hands.onResults(results => this.onHandsResults(results));
   }
   
   async setupCamera() {
-    const camera = new Camera(this.videoElement, {
-      onFrame: async () => {
-        await this.hands.send({image: this.videoElement});
-      },
-      width: 1280,
-      height: 720
-    });
-    camera.start();
+    try {
+      // First check if we have camera permissions
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+      
+      this.videoElement.srcObject = stream;
+      
+      return new Promise((resolve) => {
+        this.videoElement.onloadedmetadata = () => {
+          const camera = new Camera(this.videoElement, {
+            onFrame: async () => {
+              await this.hands.send({image: this.videoElement});
+            },
+            width: 1280,
+            height: 720
+          });
+          camera.start();
+          resolve();
+        };
+      });
+    } catch (error) {
+      this.statusElement.textContent = "Error: Camera access denied. Please grant camera permissions and reload.";
+      throw error;
+    }
   }
   
   resetBall() {
