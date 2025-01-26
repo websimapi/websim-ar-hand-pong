@@ -139,15 +139,15 @@ class PongGame {
         const palmY = landmarks[0].y * this.canvas.height;
         const palmX = landmarks[0].x * this.canvas.width;
         
-        // Calculate hand velocity
-        const handVelocity = this.calculateHandVelocity(landmarks, palmX, palmY);
+        // Calculate hand velocity and flick gesture
+        const handInfo = this.calculateHandVelocity(landmarks, palmX, palmY);
         
         if (!topHand || palmY < topHand.y) {
           topHand = {
             x: palmX,
             y: palmY,
             color: 'red',
-            velocity: handVelocity,
+            velocity: handInfo,
             landmarks: landmarks
           };
         } else if (!bottomHand || palmY > bottomHand.y) {
@@ -155,7 +155,7 @@ class PongGame {
             x: palmX,
             y: palmY,
             color: 'blue',
-            velocity: handVelocity,
+            velocity: handInfo,
             landmarks: landmarks
           };
         }
@@ -177,19 +177,66 @@ class PongGame {
     const handKey = currentY < this.canvas.height / 2 ? 'top' : 'bottom';
     const previousPosition = this.previousHandPositions[handKey];
     
+    // Calculate finger state (open or closed)
+    const fingerState = this.calculateFingerState(landmarks);
+    
     if (!previousPosition) {
-      this.previousHandPositions[handKey] = { x: currentX, y: currentY, time: performance.now() };
-      return 0;
+      this.previousHandPositions[handKey] = { 
+        x: currentX, 
+        y: currentY, 
+        time: performance.now(),
+        wasClosed: fingerState.isClosed 
+      };
+      return { velocity: 0, isFlickGesture: false };
     }
 
-    const deltaTime = (performance.now() - previousPosition.time) / 1000; // Convert to seconds
+    const deltaTime = (performance.now() - previousPosition.time) / 1000;
     const deltaX = currentX - previousPosition.x;
     const velocity = Math.abs(deltaX) / deltaTime;
 
-    // Update previous position
-    this.previousHandPositions[handKey] = { x: currentX, y: currentY, time: performance.now() };
+    // Detect flick gesture: hand was closed and is now open with high velocity
+    const isFlickGesture = previousPosition.wasClosed && 
+                          !fingerState.isClosed && 
+                          velocity > this.gestureThreshold;
 
-    return velocity;
+    // Update previous position
+    this.previousHandPositions[handKey] = { 
+      x: currentX, 
+      y: currentY, 
+      time: performance.now(),
+      wasClosed: fingerState.isClosed 
+    };
+
+    return { velocity, isFlickGesture };
+  }
+
+  calculateFingerState(landmarks) {
+    // Calculate the distance between thumb tip and index tip
+    const thumbTip = landmarks[4];
+    const indexTip = landmarks[8];
+    const middleTip = landmarks[12];
+    const ringTip = landmarks[16];
+    const pinkyTip = landmarks[20];
+    
+    // Calculate palm center using wrist and middle finger MCP
+    const wrist = landmarks[0];
+    const middleMCP = landmarks[9];
+    
+    // Calculate average distance from fingertips to palm center
+    const palmCenterX = (wrist.x + middleMCP.x) / 2;
+    const palmCenterY = (wrist.y + middleMCP.y) / 2;
+    
+    const fingerTips = [thumbTip, indexTip, middleTip, ringTip, pinkyTip];
+    const avgDistance = fingerTips.reduce((sum, tip) => {
+      const dx = tip.x - palmCenterX;
+      const dy = tip.y - palmCenterY;
+      return sum + Math.sqrt(dx * dx + dy * dy);
+    }, 0) / fingerTips.length;
+    
+    // If average distance is small, hand is considered closed
+    return {
+      isClosed: avgDistance < 0.1 // Threshold for closed hand
+    };
   }
 
   createWindEffect(x, y, direction, color) {
@@ -245,10 +292,10 @@ class PongGame {
 
   updateGame(topHand, bottomHand) {
     // Check for flick gestures
-    if (topHand.velocity > this.gestureThreshold) {
+    if (topHand.velocity.isFlickGesture) {
       this.createWindEffect(topHand.x, 40, 'down', topHand.color);
     }
-    if (bottomHand.velocity > this.gestureThreshold) {
+    if (bottomHand.velocity.isFlickGesture) {
       this.createWindEffect(bottomHand.x, this.canvas.height - 40, 'up', bottomHand.color);
     }
 
