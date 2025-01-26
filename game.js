@@ -21,6 +21,14 @@ class PongGame {
     this.lastTime = 0;
     this.deltaTime = 0;
     
+    // Add wind effect properties
+    this.windForceX = 0;
+    this.windForceY = 0;
+    this.windDecay = 0.95; // Wind force decay rate
+    this.maxWindForce = 5;
+    
+    this.previousFingerStates = new Map(); // Track finger states for each hand
+    
     this.setupCanvas();
     this.init();
   }
@@ -116,12 +124,58 @@ class PongGame {
     this.spinEffect = 0;
   }
   
+  detectFingerFlick(landmarks, handIndex) {
+    // We'll use the index finger (landmarks 5-8) for flick detection
+    const fingerBase = landmarks[5];
+    const fingerTip = landmarks[8];
+    
+    // Calculate finger extension
+    const extension = Math.hypot(
+      fingerTip.x - fingerBase.x,
+      fingerTip.y - fingerBase.y
+    );
+    
+    const currentState = {
+      extension,
+      timestamp: performance.now()
+    };
+    
+    const previousState = this.previousFingerStates.get(handIndex);
+    this.previousFingerStates.set(handIndex, currentState);
+    
+    if (!previousState) return null;
+    
+    // Calculate flick speed and direction
+    const timeDelta = currentState.timestamp - previousState.timestamp;
+    const extensionDelta = currentState.extension - previousState.extension;
+    const flickSpeed = extensionDelta / timeDelta;
+    
+    // Threshold for flick detection
+    if (Math.abs(flickSpeed) > 0.01) {
+      // Calculate flick direction vector
+      const dirX = fingerTip.x - fingerBase.x;
+      const dirY = fingerTip.y - fingerBase.y;
+      const magnitude = Math.min(Math.abs(flickSpeed) * 20, this.maxWindForce);
+      
+      return {
+        x: dirX * magnitude,
+        y: dirY * magnitude
+      };
+    }
+    
+    return null;
+  }
+
   onHandsResults(results) {
     const currentTime = performance.now();
-    this.deltaTime = (currentTime - this.lastTime) / 16.67; // Normalize to 60 FPS
+    this.deltaTime = (currentTime - this.lastTime) / 16.67;
     this.lastTime = currentTime;
 
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Decay existing wind force
+    this.windForceX *= this.windDecay;
+    this.windForceY *= this.windDecay;
     
     if (results.multiHandLandmarks) {
       let topHand = null;
@@ -129,6 +183,17 @@ class PongGame {
       
       results.multiHandLandmarks.forEach((landmarks, index) => {
         const palmY = landmarks[0].y * this.canvas.height;
+        
+        // Detect finger flicks
+        const flickForce = this.detectFingerFlick(landmarks, index);
+        if (flickForce) {
+          this.windForceX += flickForce.x;
+          this.windForceY += flickForce.y;
+          
+          // Clamp wind force
+          this.windForceX = Math.max(Math.min(this.windForceX, this.maxWindForce), -this.maxWindForce);
+          this.windForceY = Math.max(Math.min(this.windForceY, this.maxWindForce), -this.maxWindForce);
+        }
         
         if (!topHand || palmY < topHand.y) {
           topHand = {
@@ -166,9 +231,13 @@ class PongGame {
     this.ctx.fillStyle = bottomHand.color;
     this.ctx.fillRect(player2X, this.canvas.height - 40, this.paddleWidth, this.paddleHeight);
     
-    // Update ball position with delta time for consistent speed
-    this.ballX += this.ballSpeedX * this.deltaTime;
-    this.ballY += this.ballSpeedY * this.deltaTime;
+    // Apply wind forces to ball movement
+    this.ballSpeedX += this.windForceX * 0.1 * this.deltaTime;
+    this.ballSpeedY += this.windForceY * 0.1 * this.deltaTime;
+    
+    // Update ball position with delta time and wind effects
+    this.ballX += (this.ballSpeedX + this.windForceX * 0.2) * this.deltaTime;
+    this.ballY += (this.ballSpeedY + this.windForceY * 0.2) * this.deltaTime;
     
     // Add spin effect to X movement
     this.ballX += this.spinEffect * this.deltaTime;
@@ -204,6 +273,11 @@ class PongGame {
       this.player1Score++;
       document.getElementById('player1-score').textContent = this.player1Score;
       this.resetBall();
+    }
+    
+    // Visualize wind effect
+    if (Math.abs(this.windForceX) > 0.1 || Math.abs(this.windForceY) > 0.1) {
+      this.drawWindEffect();
     }
     
     // Draw ball with motion blur effect
@@ -249,6 +323,24 @@ class PongGame {
     this.ballSpeedY = (this.ballSpeedY / newSpeed) * currentSpeed;
   }
   
+  drawWindEffect() {
+    const particles = 20;
+    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    
+    for (let i = 0; i < particles; i++) {
+      const x = Math.random() * this.canvas.width;
+      const y = Math.random() * this.canvas.height;
+      
+      this.ctx.beginPath();
+      this.ctx.moveTo(x, y);
+      this.ctx.lineTo(
+        x + this.windForceX * 5,
+        y + this.windForceY * 5
+      );
+      this.ctx.stroke();
+    }
+  }
+
   draw() {
     if (!this.ctx) return;
     this.ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';

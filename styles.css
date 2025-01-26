@@ -53,3 +53,14 @@ body {
   font-family: Arial, sans-serif;
   z-index: 10;
 }
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.wind-particle {
+  position: absolute;
+  pointer-events: none;
+  animation: fadeOut 1s linear forwards;
+}
