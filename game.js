@@ -29,7 +29,18 @@ class PongGame {
     this.gestureThreshold = 15; // Speed threshold for flick detection
     this.windEffects = [];
     
+    // Add power charge and cooldown properties
+    this.powerCharge = {
+      top: { charge: 0, cooldown: 0, lastPosition: null },
+      bottom: { charge: 0, cooldown: 0, lastPosition: null }
+    };
+    
+    this.maxPowerCharge = 100;
+    this.chargeRate = 2;
+    this.cooldownDuration = 120; // frames
+    
     this.setupCanvas();
+    this.createPowerMeters();
     this.init();
   }
 
@@ -111,6 +122,44 @@ class PongGame {
     }
   }
   
+  createPowerMeters() {
+    // Create top power meter
+    const topMeter = document.createElement('div');
+    topMeter.className = 'power-meter';
+    topMeter.style.top = '60px';
+    topMeter.style.left = '20px';
+    
+    const topFill = document.createElement('div');
+    topFill.className = 'power-meter-fill';
+    topMeter.appendChild(topFill);
+    
+    const topCooldown = document.createElement('div');
+    topCooldown.className = 'cooldown-overlay';
+    topMeter.appendChild(topCooldown);
+    
+    // Create bottom power meter
+    const bottomMeter = document.createElement('div');
+    bottomMeter.className = 'power-meter';
+    bottomMeter.style.bottom = '60px';
+    bottomMeter.style.left = '20px';
+    
+    const bottomFill = document.createElement('div');
+    bottomFill.className = 'power-meter-fill';
+    bottomMeter.appendChild(bottomFill);
+    
+    const bottomCooldown = document.createElement('div');
+    bottomCooldown.className = 'cooldown-overlay';
+    bottomMeter.appendChild(bottomCooldown);
+    
+    document.getElementById('game-container').appendChild(topMeter);
+    document.getElementById('game-container').appendChild(bottomMeter);
+    
+    this.powerMeters = {
+      top: { meter: topMeter, fill: topFill, cooldown: topCooldown },
+      bottom: { meter: bottomMeter, fill: bottomFill, cooldown: bottomCooldown }
+    };
+  }
+
   resetBall() {
     this.ballX = this.canvas.width / 2;
     this.ballY = this.canvas.height / 2;
@@ -173,41 +222,65 @@ class PongGame {
     this.updateWindEffects();
   }
 
+  updatePowerMeters() {
+    ['top', 'bottom'].forEach(position => {
+      const powerState = this.powerCharge[position];
+      const meter = this.powerMeters[position];
+      
+      // Update charge fill
+      meter.fill.style.width = `${(powerState.charge / this.maxPowerCharge) * 100}%`;
+      
+      // Update cooldown overlay
+      if (powerState.cooldown > 0) {
+        meter.cooldown.style.width = `${(powerState.cooldown / this.cooldownDuration) * 100}%`;
+      } else {
+        meter.cooldown.style.width = '0%';
+      }
+    });
+  }
+
   calculateHandVelocity(landmarks, currentX, currentY) {
     const handKey = currentY < this.canvas.height / 2 ? 'top' : 'bottom';
     const previousPosition = this.previousHandPositions[handKey];
     
-    // Calculate finger state (open or closed)
     const fingerState = this.calculateFingerState(landmarks);
+    const powerState = this.powerCharge[handKey];
     
-    if (!previousPosition) {
-      this.previousHandPositions[handKey] = { 
-        x: currentX, 
-        y: currentY, 
-        time: performance.now(),
-        wasClosed: fingerState.isClosed 
-      };
-      return { velocity: 0, isFlickGesture: false };
+    // Handle power charging when fist is closed
+    if (fingerState.isClosed && powerState.cooldown === 0) {
+      if (powerState.lastPosition === null) {
+        powerState.lastPosition = { x: currentX, y: currentY };
+      }
+      powerState.charge = Math.min(this.maxPowerCharge, powerState.charge + this.chargeRate);
+    } else if (!fingerState.isClosed && powerState.lastPosition !== null) {
+      // Released fist - check for flick
+      const deltaX = currentX - powerState.lastPosition.x;
+      const isFlickGesture = Math.abs(deltaX) > this.gestureThreshold && powerState.charge > 0;
+      
+      if (isFlickGesture) {
+        // Start cooldown and reset charge
+        powerState.cooldown = this.cooldownDuration;
+      }
+      powerState.lastPosition = null;
+      powerState.charge = 0;
     }
-
-    const deltaTime = (performance.now() - previousPosition.time) / 1000;
-    const deltaX = currentX - previousPosition.x;
-    const velocity = Math.abs(deltaX) / deltaTime;
-
-    // Detect flick gesture: hand was closed and is now open with high velocity
-    const isFlickGesture = previousPosition.wasClosed && 
-                          !fingerState.isClosed && 
-                          velocity > this.gestureThreshold;
-
-    // Update previous position
-    this.previousHandPositions[handKey] = { 
-      x: currentX, 
-      y: currentY, 
-      time: performance.now(),
-      wasClosed: fingerState.isClosed 
+    
+    // Update cooldown
+    if (powerState.cooldown > 0) {
+      powerState.cooldown--;
+    }
+    
+    // Update power meters
+    this.updatePowerMeters();
+    
+    // Return velocity info and whether paddle can move
+    return {
+      velocity: 0,
+      isFlickGesture: false,
+      canMove: !fingerState.isClosed,
+      power: powerState.charge,
+      isFlick: !fingerState.isClosed && powerState.lastPosition !== null
     };
-
-    return { velocity, isFlickGesture };
   }
 
   calculateFingerState(landmarks) {
@@ -239,19 +312,20 @@ class PongGame {
     };
   }
 
-  createWindEffect(x, y, direction, color) {
+  createWindEffect(x, y, direction, color, power) {
+    const particleCount = Math.floor(10 + (power / this.maxPowerCharge) * 20);
     const wind = {
       x: x,
       y: y,
       direction: direction,
       color: color,
       age: 0,
-      maxAge: 30,
-      particles: Array.from({ length: 10 }, () => ({
+      maxAge: 30 + (power / this.maxPowerCharge) * 30,
+      particles: Array.from({ length: particleCount }, () => ({
         x: x + (Math.random() - 0.5) * 20,
         y: y + (Math.random() - 0.5) * 20,
-        size: Math.random() * 10 + 5,
-        speed: Math.random() * 5 + 10,
+        size: Math.random() * 10 + 5 + (power / this.maxPowerCharge) * 10,
+        speed: Math.random() * 5 + 10 + (power / this.maxPowerCharge) * 15,
         angle: (Math.random() - 0.5) * 0.5 + (direction === 'up' ? -Math.PI/2 : Math.PI/2)
       }))
     };
@@ -291,21 +365,26 @@ class PongGame {
   }
 
   updateGame(topHand, bottomHand) {
-    // Check for flick gestures
-    if (topHand.velocity.isFlickGesture) {
-      this.createWindEffect(topHand.x, 40, 'down', topHand.color);
+    // Only update paddle positions if hand is not charging power
+    const player1X = topHand.velocity.canMove ? 
+      topHand.x - this.paddleWidth / 2 : 
+      (this.powerCharge.top.lastPosition?.x ?? topHand.x) - this.paddleWidth / 2;
+    
+    const player2X = bottomHand.velocity.canMove ? 
+      bottomHand.x - this.paddleWidth / 2 : 
+      (this.powerCharge.bottom.lastPosition?.x ?? bottomHand.x) - this.paddleWidth / 2;
+    
+    // Check for flick gestures with power
+    if (topHand.velocity.isFlick) {
+      this.createWindEffect(topHand.x, 40, 'down', topHand.color, this.powerCharge.top.charge);
     }
-    if (bottomHand.velocity.isFlickGesture) {
-      this.createWindEffect(bottomHand.x, this.canvas.height - 40, 'up', bottomHand.color);
+    if (bottomHand.velocity.isFlick) {
+      this.createWindEffect(bottomHand.x, this.canvas.height - 40, 'up', bottomHand.color, this.powerCharge.bottom.charge);
     }
-
+    
     // Apply wind effects to ball
     this.applyWindToBall();
 
-    // Update paddle positions with interpolation for smoothness
-    const player1X = topHand.x - this.paddleWidth / 2;
-    const player2X = bottomHand.x - this.paddleWidth / 2;
-    
     // Draw paddles
     this.ctx.fillStyle = topHand.color;
     this.ctx.fillRect(player1X, 20, this.paddleWidth, this.paddleHeight);
