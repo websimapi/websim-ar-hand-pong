@@ -69,22 +69,17 @@ body {
   background: rgba(255, 255, 255, 0.2);
   border: 2px solid rgba(255, 255, 255, 0.5);
   border-radius: 5px;
+  overflow: hidden;
 }
 
 .power-meter-fill {
   height: 100%;
   width: 0%;
-  background: white;
+  background: linear-gradient(90deg, white, #00ff00);
   border-radius: 3px;
   transition: width 0.1s linear;
 }
 
 .cooldown-overlay {
-  height: 100%;
-  background: rgba(255, 0, 0, 0.3);
-  border-radius: 3px;
-  position: absolute;
-  top: 0;
-  right: 0;
-  transition: width 0.1s linear;
+  display: none;
 }

@@ -29,7 +29,7 @@ class PongGame {
     this.gestureThreshold = 15; // Speed threshold for flick detection
     this.windEffects = [];
     
-    // Add power charge and cooldown properties
+    // Add power charge properties
     this.powerCharge = {
       top: { charge: 0, cooldown: 0, lastPosition: null },
       bottom: { charge: 0, cooldown: 0, lastPosition: null }
@@ -37,7 +37,6 @@ class PongGame {
     
     this.maxPowerCharge = 100;
     this.chargeRate = 2;
-    this.cooldownDuration = 120; // frames
     
     this.setupCanvas();
     this.createPowerMeters();
@@ -133,10 +132,6 @@ class PongGame {
     topFill.className = 'power-meter-fill';
     topMeter.appendChild(topFill);
     
-    const topCooldown = document.createElement('div');
-    topCooldown.className = 'cooldown-overlay';
-    topMeter.appendChild(topCooldown);
-    
     // Create bottom power meter
     const bottomMeter = document.createElement('div');
     bottomMeter.className = 'power-meter';
@@ -147,16 +142,12 @@ class PongGame {
     bottomFill.className = 'power-meter-fill';
     bottomMeter.appendChild(bottomFill);
     
-    const bottomCooldown = document.createElement('div');
-    bottomCooldown.className = 'cooldown-overlay';
-    bottomMeter.appendChild(bottomCooldown);
-    
     document.getElementById('game-container').appendChild(topMeter);
     document.getElementById('game-container').appendChild(bottomMeter);
     
     this.powerMeters = {
-      top: { meter: topMeter, fill: topFill, cooldown: topCooldown },
-      bottom: { meter: bottomMeter, fill: bottomFill, cooldown: bottomCooldown }
+      top: { meter: topMeter, fill: topFill },
+      bottom: { meter: bottomMeter, fill: bottomFill }
     };
   }
 
@@ -229,13 +220,6 @@ class PongGame {
       
       // Update charge fill
       meter.fill.style.width = `${(powerState.charge / this.maxPowerCharge) * 100}%`;
-      
-      // Update cooldown overlay
-      if (powerState.cooldown > 0) {
-        meter.cooldown.style.width = `${(powerState.cooldown / this.cooldownDuration) * 100}%`;
-      } else {
-        meter.cooldown.style.width = '0%';
-      }
     });
   }
 
@@ -247,7 +231,7 @@ class PongGame {
     const powerState = this.powerCharge[handKey];
     
     // Handle power charging when fist is closed
-    if (fingerState.isClosed && powerState.cooldown === 0) {
+    if (fingerState.isClosed) {
       if (powerState.lastPosition === null) {
         powerState.lastPosition = { x: currentX, y: currentY };
       }
@@ -258,16 +242,15 @@ class PongGame {
       const isFlickGesture = Math.abs(deltaX) > this.gestureThreshold && powerState.charge > 0;
       
       if (isFlickGesture) {
-        // Start cooldown and reset charge
-        powerState.cooldown = this.cooldownDuration;
+        // Create wind effect with current power
+        const y = handKey === 'top' ? 40 : this.canvas.height - 40;
+        const direction = handKey === 'top' ? 'down' : 'up';
+        const color = handKey === 'top' ? 'red' : 'blue';
+        this.createWindEffect(currentX, y, direction, color, powerState.charge);
       }
+      
       powerState.lastPosition = null;
       powerState.charge = 0;
-    }
-    
-    // Update cooldown
-    if (powerState.cooldown > 0) {
-      powerState.cooldown--;
     }
     
     // Update power meters
