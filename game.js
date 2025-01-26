@@ -21,13 +21,13 @@ class PongGame {
     this.lastTime = 0;
     this.deltaTime = 0;
     
-    // Add wind effect properties
-    this.windForceX = 0;
-    this.windForceY = 0;
-    this.windDecay = 0.95; // Wind force decay rate
-    this.maxWindForce = 5;
-    
-    this.previousFingerStates = new Map(); // Track finger states for each hand
+    // Add gesture tracking properties
+    this.previousHandPositions = {
+      top: null,
+      bottom: null
+    };
+    this.gestureThreshold = 15; // Speed threshold for flick detection
+    this.windEffects = [];
     
     this.setupCanvas();
     this.init();
@@ -124,48 +124,6 @@ class PongGame {
     this.spinEffect = 0;
   }
   
-  detectFingerFlick(landmarks, handIndex) {
-    // We'll use the index finger (landmarks 5-8) for flick detection
-    const fingerBase = landmarks[5];
-    const fingerTip = landmarks[8];
-    
-    // Calculate finger extension
-    const extension = Math.hypot(
-      fingerTip.x - fingerBase.x,
-      fingerTip.y - fingerBase.y
-    );
-    
-    const currentState = {
-      extension,
-      timestamp: performance.now()
-    };
-    
-    const previousState = this.previousFingerStates.get(handIndex);
-    this.previousFingerStates.set(handIndex, currentState);
-    
-    if (!previousState) return null;
-    
-    // Calculate flick speed and direction
-    const timeDelta = currentState.timestamp - previousState.timestamp;
-    const extensionDelta = currentState.extension - previousState.extension;
-    const flickSpeed = extensionDelta / timeDelta;
-    
-    // Threshold for flick detection
-    if (Math.abs(flickSpeed) > 0.01) {
-      // Calculate flick direction vector
-      const dirX = fingerTip.x - fingerBase.x;
-      const dirY = fingerTip.y - fingerBase.y;
-      const magnitude = Math.min(Math.abs(flickSpeed) * 20, this.maxWindForce);
-      
-      return {
-        x: dirX * magnitude,
-        y: dirY * magnitude
-      };
-    }
-    
-    return null;
-  }
-
   onHandsResults(results) {
     const currentTime = performance.now();
     this.deltaTime = (currentTime - this.lastTime) / 16.67;
@@ -173,39 +131,32 @@ class PongGame {
 
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     
-    // Decay existing wind force
-    this.windForceX *= this.windDecay;
-    this.windForceY *= this.windDecay;
-    
     if (results.multiHandLandmarks) {
       let topHand = null;
       let bottomHand = null;
       
       results.multiHandLandmarks.forEach((landmarks, index) => {
         const palmY = landmarks[0].y * this.canvas.height;
+        const palmX = landmarks[0].x * this.canvas.width;
         
-        // Detect finger flicks
-        const flickForce = this.detectFingerFlick(landmarks, index);
-        if (flickForce) {
-          this.windForceX += flickForce.x;
-          this.windForceY += flickForce.y;
-          
-          // Clamp wind force
-          this.windForceX = Math.max(Math.min(this.windForceX, this.maxWindForce), -this.maxWindForce);
-          this.windForceY = Math.max(Math.min(this.windForceY, this.maxWindForce), -this.maxWindForce);
-        }
+        // Calculate hand velocity
+        const handVelocity = this.calculateHandVelocity(landmarks, palmX, palmY);
         
         if (!topHand || palmY < topHand.y) {
           topHand = {
-            x: landmarks[0].x * this.canvas.width,
+            x: palmX,
             y: palmY,
-            color: 'red'
+            color: 'red',
+            velocity: handVelocity,
+            landmarks: landmarks
           };
         } else if (!bottomHand || palmY > bottomHand.y) {
           bottomHand = {
-            x: landmarks[0].x * this.canvas.width,
+            x: palmX,
             y: palmY,
-            color: 'blue'
+            color: 'blue',
+            velocity: handVelocity,
+            landmarks: landmarks
           };
         }
       });
@@ -217,9 +168,93 @@ class PongGame {
         this.statusElement.style.display = 'block';
       }
     }
+
+    // Update wind effects
+    this.updateWindEffects();
   }
-  
+
+  calculateHandVelocity(landmarks, currentX, currentY) {
+    const handKey = currentY < this.canvas.height / 2 ? 'top' : 'bottom';
+    const previousPosition = this.previousHandPositions[handKey];
+    
+    if (!previousPosition) {
+      this.previousHandPositions[handKey] = { x: currentX, y: currentY, time: performance.now() };
+      return 0;
+    }
+
+    const deltaTime = (performance.now() - previousPosition.time) / 1000; // Convert to seconds
+    const deltaX = currentX - previousPosition.x;
+    const velocity = Math.abs(deltaX) / deltaTime;
+
+    // Update previous position
+    this.previousHandPositions[handKey] = { x: currentX, y: currentY, time: performance.now() };
+
+    return velocity;
+  }
+
+  createWindEffect(x, y, direction, color) {
+    const wind = {
+      x: x,
+      y: y,
+      direction: direction,
+      color: color,
+      age: 0,
+      maxAge: 30,
+      particles: Array.from({ length: 10 }, () => ({
+        x: x + (Math.random() - 0.5) * 20,
+        y: y + (Math.random() - 0.5) * 20,
+        size: Math.random() * 10 + 5,
+        speed: Math.random() * 5 + 10,
+        angle: (Math.random() - 0.5) * 0.5 + (direction === 'up' ? -Math.PI/2 : Math.PI/2)
+      }))
+    };
+    this.windEffects.push(wind);
+  }
+
+  updateWindEffects() {
+    for (let i = this.windEffects.length - 1; i >= 0; i--) {
+      const wind = this.windEffects[i];
+      wind.age++;
+      
+      // Update particles
+      wind.particles.forEach(particle => {
+        particle.x += Math.cos(particle.angle) * particle.speed;
+        particle.y += Math.sin(particle.angle) * particle.speed;
+        particle.size *= 0.95;
+      });
+
+      // Draw wind effect
+      this.ctx.save();
+      this.ctx.globalAlpha = 1 - (wind.age / wind.maxAge);
+      
+      wind.particles.forEach(particle => {
+        this.ctx.beginPath();
+        this.ctx.fillStyle = wind.color + '80'; // Add transparency
+        this.ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+        this.ctx.fill();
+      });
+      
+      this.ctx.restore();
+
+      // Remove old effects
+      if (wind.age >= wind.maxAge) {
+        this.windEffects.splice(i, 1);
+      }
+    }
+  }
+
   updateGame(topHand, bottomHand) {
+    // Check for flick gestures
+    if (topHand.velocity > this.gestureThreshold) {
+      this.createWindEffect(topHand.x, 40, 'down', topHand.color);
+    }
+    if (bottomHand.velocity > this.gestureThreshold) {
+      this.createWindEffect(bottomHand.x, this.canvas.height - 40, 'up', bottomHand.color);
+    }
+
+    // Apply wind effects to ball
+    this.applyWindToBall();
+
     // Update paddle positions with interpolation for smoothness
     const player1X = topHand.x - this.paddleWidth / 2;
     const player2X = bottomHand.x - this.paddleWidth / 2;
@@ -231,13 +266,9 @@ class PongGame {
     this.ctx.fillStyle = bottomHand.color;
     this.ctx.fillRect(player2X, this.canvas.height - 40, this.paddleWidth, this.paddleHeight);
     
-    // Apply wind forces to ball movement
-    this.ballSpeedX += this.windForceX * 0.1 * this.deltaTime;
-    this.ballSpeedY += this.windForceY * 0.1 * this.deltaTime;
-    
-    // Update ball position with delta time and wind effects
-    this.ballX += (this.ballSpeedX + this.windForceX * 0.2) * this.deltaTime;
-    this.ballY += (this.ballSpeedY + this.windForceY * 0.2) * this.deltaTime;
+    // Update ball position with delta time for consistent speed
+    this.ballX += this.ballSpeedX * this.deltaTime;
+    this.ballY += this.ballSpeedY * this.deltaTime;
     
     // Add spin effect to X movement
     this.ballX += this.spinEffect * this.deltaTime;
@@ -273,11 +304,6 @@ class PongGame {
       this.player1Score++;
       document.getElementById('player1-score').textContent = this.player1Score;
       this.resetBall();
-    }
-    
-    // Visualize wind effect
-    if (Math.abs(this.windForceX) > 0.1 || Math.abs(this.windForceY) > 0.1) {
-      this.drawWindEffect();
     }
     
     // Draw ball with motion blur effect
@@ -322,22 +348,20 @@ class PongGame {
     this.ballSpeedX = (this.ballSpeedX / newSpeed) * currentSpeed;
     this.ballSpeedY = (this.ballSpeedY / newSpeed) * currentSpeed;
   }
-  
-  drawWindEffect() {
-    const particles = 20;
-    this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    
-    for (let i = 0; i < particles; i++) {
-      const x = Math.random() * this.canvas.width;
-      const y = Math.random() * this.canvas.height;
+
+  applyWindToBall() {
+    for (const wind of this.windEffects) {
+      const dx = this.ballX - wind.x;
+      const dy = this.ballY - wind.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
       
-      this.ctx.beginPath();
-      this.ctx.moveTo(x, y);
-      this.ctx.lineTo(
-        x + this.windForceX * 5,
-        y + this.windForceY * 5
-      );
-      this.ctx.stroke();
+      if (distance < 200) { // Wind effect range
+        const strength = (1 - distance / 200) * 0.5;
+        const direction = wind.direction === 'up' ? -1 : 1;
+        
+        this.ballSpeedY += direction * strength;
+        this.ballSpeedX += (dx / distance) * strength;
+      }
     }
   }
 
